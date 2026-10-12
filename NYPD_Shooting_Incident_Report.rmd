@@ -1,0 +1,284 @@
+---
+title: "NYPD Shooting Incident Data Analysis"
+author: "Birjung"
+date: "2026-05-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+### Introduction 
+
+In this project, I am analyzing the NYPD Shooting Incident dataset. The goal is to clean and explore the data, identify patterns in shooting incidents across New York City, create visualizations, and build a logistic regression model. Possible bias and limitations in the data and analysis will also be discussed.
+
+### 1. Importing Libraries
+```{r import-libraries}
+library(tidyverse)
+library(lubridate)
+
+library(readr)
+```
+### 2. Importing dataset 
+
+```{r import_data}
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+shootings <- read_csv(url)
+```
+### 3. initial data exploration (Before cleaning anything, we need to understand what kind of data each column contains and where values are missing)
+```{r data_view}
+head(shootings)
+dim(shootings)
+glimpse(shootings)
+```
+### 4. List of all columns 
+```{r columns_name}
+colnames(shootings)
+```
+### 5. Checking Missing Values
+```{r}
+colSums(is.na(shootings))
+```
+### 6.Number of rows 
+```{r no_of_rows}
+nrow(shootings)
+```
+### 7. Percentage of Missing Values
+
+```{r missing-percentage}
+colSums(is.na(shootings)) / nrow(shootings) * 100
+```
+### 8. Removing Columns with High Missingness
+
+Some columns (LOC_OF_OCCUR_DESC (86.05% missing values),LOC_CLASSFCTN_DESC(86.05% missing values ),LOCATION_DESC (50.35% missing value)) contain a very high percentage of missing values. These columns were removed because they may not provide enough reliable information for this analysis.
+
+```{r remove-columns}
+shootings_clean <- shootings %>%
+  select(
+    -LOC_OF_OCCUR_DESC,
+    -LOC_CLASSFCTN_DESC,
+    -LOCATION_DESC
+  )
+
+dim(shootings_clean)
+```
+### 9. Checking Data Types
+After removing columns with high missingness, the structure of the cleaned dataset was examined.
+
+```{r check-data-types}
+glimpse(shootings_clean)
+```
+### 10. Converting OCCUR_DATE into a Date
+```{r converting_real_date}
+shootings_clean <- shootings_clean %>%
+mutate(OCCUR_DATE = mdy(OCCUR_DATE))
+glimpse(shootings_clean)
+```
+### 11. Cleaning Unknown Perpetrator Values
+Some perpetrator variables contained text values such as `(null)`, `UNKNOWN`, and `U`. These values represent unavailable or unknown information, so they were converted to proper missing values (`NA`).
+
+```{r clean-perpetrator-values}
+shootings_clean <- shootings_clean %>%
+  mutate(
+    PERP_AGE_GROUP = na_if(PERP_AGE_GROUP, "(null)"),
+    PERP_AGE_GROUP = na_if(PERP_AGE_GROUP, "UNKNOWN"),
+
+    PERP_SEX = na_if(PERP_SEX, "(null)"),
+    PERP_SEX = na_if(PERP_SEX, "U"),
+
+    PERP_RACE = na_if(PERP_RACE, "(null)"),
+    PERP_RACE = na_if(PERP_RACE, "UNKNOWN")
+  )
+
+colSums(is.na(shootings_clean))
+```
+### 12. Verifying Cleaned Perpetrator Variables
+After converting unknown values to `NA`, the cleaned categories were checked.
+```{r verify-perp-cleaning}
+unique(shootings_clean$PERP_AGE_GROUP)
+unique(shootings_clean$PERP_SEX)
+unique(shootings_clean$PERP_RACE)
+
+table(shootings_clean$PERP_AGE_GROUP, useNA = "ifany")
+table(shootings_clean$PERP_SEX, useNA = "ifany")
+table(shootings_clean$PERP_RACE, useNA = "ifany")
+```
+### 13. Cleaning Invalid Perpetrator Age Groups
+
+After examining the perpetrator age-group categories, several unexpected values such as `1020`, `1028`, `2021`, `224`, and `940` were found. These values do not represent valid age groups, so they were converted to missing values (`NA`).
+
+```{r clean-invalid-age-groups}
+shootings_clean <- shootings_clean %>%
+  mutate(
+    PERP_AGE_GROUP = if_else(
+      PERP_AGE_GROUP %in% c("<18", "18-24", "25-44", "45-64", "65+"),
+      PERP_AGE_GROUP,
+      NA_character_
+    )
+  )
+
+table(shootings_clean$PERP_AGE_GROUP, useNA = "ifany")
+```
+### 14. Checking for Duplicate Rows
+The dataset was checked for completely duplicated rows before beginning the analysis.
+```{r check-duplicates}
+sum(duplicated(shootings_clean))
+```
+### 15. Checking Victim Variables
+The victim age group, sex, and race variables were examined for unexpected or inconsistent categories.
+```{r check-victim-values}
+unique(shootings_clean$VIC_AGE_GROUP)
+unique(shootings_clean$VIC_SEX)
+unique(shootings_clean$VIC_RACE)
+
+table(shootings_clean$VIC_AGE_GROUP, useNA = "ifany")
+table(shootings_clean$VIC_SEX, useNA = "ifany")
+table(shootings_clean$VIC_RACE, useNA = "ifany")
+```
+### 16. Cleaning Invalid Victim Values
+Some victim variables contained unknown or invalid categories. These values were converted to missing values (`NA`) so they would not be treated as valid categories during analysis.
+
+```{r clean-victim-values}
+shootings_clean <- shootings_clean %>%
+  mutate(
+    VIC_AGE_GROUP = na_if(VIC_AGE_GROUP, "UNKNOWN"),
+    VIC_AGE_GROUP = na_if(VIC_AGE_GROUP, "1022"),
+
+    VIC_SEX = na_if(VIC_SEX, "U"),
+
+    VIC_RACE = na_if(VIC_RACE, "UNKNOWN")
+  )
+
+table(shootings_clean$VIC_AGE_GROUP, useNA = "ifany")
+table(shootings_clean$VIC_SEX, useNA = "ifany")
+table(shootings_clean$VIC_RACE, useNA = "ifany")
+```
+### 17.  Data Quality Check
+Before beginning the analysis, the cleaned dataset was reviewed to check borough categories, numeric variables, geographic coordinates, and the date range.
+
+```{r final-data-check}
+unique(shootings_clean$BORO)
+table(shootings_clean$BORO, useNA = "ifany")
+
+summary(shootings_clean$PRECINCT)
+summary(shootings_clean$Latitude)
+summary(shootings_clean$Longitude)
+
+range(shootings_clean$OCCUR_DATE, na.rm = TRUE)
+```
+## Analysis
+### 1. Shooting Incidents by Borough
+The number of shooting incidents was summarized by borough to compare the distribution of incidents across New York City.
+```{r shootings-by-borough}
+shootings_by_boro <- shootings_clean %>%
+  count(BORO, sort = TRUE)
+
+shootings_by_boro
+```
+#### 1. Visualization(I)
+The bar chart below compares the number of shooting incidents across the five boroughs.
+
+```{r borough-bar-chart}
+ggplot(shootings_by_boro, aes(x = reorder(BORO, n), y = n)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "NYPD Shooting Incidents by Borough",
+    x = "Borough",
+    y = "Number of Shooting Incidents"
+  )
+```
+#### 1. Interpretation
+Brooklyn had the highest number of recorded shooting incidents, followed by the Bronx. Staten Island had the lowest number of shooting incidents among the five boroughs.
+
+### 2. Shooting Incidents Changed Over Time
+The number of shooting incidents was summarized by year to examine how recorded shooting incidents changed over time.
+
+```{r shootings-by-year}
+shootings_by_year <- shootings_clean %>%
+  mutate(YEAR = year(OCCUR_DATE)) %>%
+  count(YEAR)
+
+shootings_by_year
+```
+#### 2. Visualization(II)
+
+The line chart below shows how the number of recorded shooting incidents changed from year to year.
+
+```{r shootings-year-plot}
+ggplot(shootings_by_year, aes(x = YEAR, y = n)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "NYPD Shooting Incidents by Year",
+    x = "Year",
+    y = "Number of Shooting Incidents"
+  )
+```
+#### 2. Interpretation
+Recorded shooting incidents generally decreased from 2006 to 2019. There was a sharp increase in 2020 and 2021, followed by a decline from 2022 through 2024.
+
+## Model
+### 1. Preparing Data for the Model
+
+A logistic regression model was used to examine whether borough and victim characteristics were associated with whether a shooting incident was classified as a statistical murder.
+Rows with missing values in the variables used for the model were removed.
+```{r prepare-model-data}
+model_data <- shootings_clean %>%
+  select(
+    STATISTICAL_MURDER_FLAG,
+    BORO,
+    VIC_AGE_GROUP,
+    VIC_SEX
+  ) %>%
+  drop_na()
+
+dim(model_data)
+```
+
+### 2. Logistic Regression Model
+
+A logistic regression model was used to examine whether borough, victim age group, and victim sex were associated with whether a shooting incident was classified as a statistical murder.
+
+`VIC_RACE` was not included in the final model because the race categories were highly unbalanced, which produced unstable model estimates.
+
+```{r logistic-regression}
+murder_model <- glm(
+  STATISTICAL_MURDER_FLAG ~ BORO + VIC_AGE_GROUP + VIC_SEX,
+  data = model_data,
+  family = binomial
+)
+
+summary(murder_model)
+```
+### 3. Model Evaluation
+I used a logistic regression model to examine whether borough, victim age group, and victim sex were associated with whether a shooting was classified as a statistical murder. The results showed that victim age group was statistically significant. All age groups above 18 had p-values below 0.05 compared with victims under 18, showing an association between victim age and murder classification.
+
+For borough, only Manhattan showed a statistically significant difference compared with the Bronx. Brooklyn, Queens, and Staten Island did not show significant differences.
+
+Victim sex was not statistically significant because its p-value was greater than 0.05. This means the model did not find enough evidence that murder classification differed between male and female victims.
+
+
+## Bias and Limitations
+
+The NYPD Shooting Incident dataset may contain several sources of bias and limitations.
+
+First, perpetrator information has a large amount of missing data. For example, perpetrator age, sex, and race contain many `NA` values. This means any analysis involving perpetrator characteristics may not represent all shooting incidents equally.
+
+Second, some victim race categories have very small sample sizes compared with others. This imbalance can make statistical model estimates unstable and less reliable for those smaller groups.
+
+Third, the dataset contains only incidents recorded by the NYPD. Therefore, the analysis reflects reported and recorded shooting incidents and may not represent events that were not reported or recorded.
+
+Finally, the model shows associations between variables such as borough, victim age group, and murder classification. These associations should not be interpreted as proof of causation.
+
+Also, the borough comparison is based on the total number of shooting incidents and does not consider the population of each borough. So, a borough with more incidents does not always mean a person has a higher chance of being involved in a shooting there.
+
+## Conclusion
+In this project, I imported, cleaned, analyzed, and visualized the NYPD Shooting Incident dataset. I first checked missing values, removed columns with very high missingness, corrected the date format, and cleaned invalid values in victim and perpetrator information.
+
+The analysis showed that Brooklyn had the highest number of recorded shooting incidents, followed by the Bronx. The yearly trend showed that shooting incidents generally decreased before increasing sharply in 2020 and 2021, then started decreasing again.
+
+I also created a logistic regression model using borough, victim age group, and victim sex. The model showed that victim age group had a significant association with whether a shooting incident was classified as a statistical murder, while victim sex was not statistically significant.
+
+Overall, this project helped me understand how R can be used for data cleaning, analysis, visualization, and basic statistical modeling. It also showed me that missing values, unbalanced categories, and data limitations must be considered before making conclusions from the results.
+
